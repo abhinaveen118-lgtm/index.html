@@ -3,33 +3,216 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PNR Status</title>
+  <title>PNR Manager</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    body { font-family: sans-serif; padding: 25px; text-align: center; }
-    input { width: 85%; padding: 12px; margin: 15px 0; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
-    button { background: #2481cc; color: white; border: none; padding: 12px; width: 85%; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f8f9fa;
+      color: #222;
+      text-align: center;
+    }
+    .container { max-width: 480px; margin: 0 auto; }
+    h3 { margin-top: 10px; color: #1a1a1a; }
+    input {
+      width: 100%;
+      padding: 14px;
+      margin: 10px 0;
+      font-size: 16px;
+      border: 1px solid #dcdfe6;
+      border-radius: 10px;
+      box-sizing: border-box;
+      outline: none;
+    }
+    .btn-main {
+      background: #2481cc;
+      color: #fff;
+      border: none;
+      padding: 14px;
+      width: 100%;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    #listContainer { margin-top: 30px; text-align: left; }
+    .card-header { font-size: 14px; font-weight: bold; color: #666; margin-bottom: 10px; }
+    .pnr-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fff;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .pnr-meta { text-align: left; cursor: pointer; flex-grow: 1; }
+    .pnr-number { font-size: 17px; font-weight: 700; color: #2481cc; display: block; }
+    .pnr-tap { font-size: 12px; color: #888; }
+    .del-btn {
+      background: #ffebee;
+      color: #e53935;
+      border: 1px solid #ffcdd2;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    /* Modal / In-app ticket viewer */
+    #viewerModal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #fff;
+      z-index: 9999;
+      flex-direction: column;
+    }
+    .modal-bar {
+      height: 50px;
+      background: #2481cc;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 16px;
+      color: #fff;
+      font-weight: bold;
+    }
+    .back-btn {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    iframe { width: 100%; height: calc(100% - 50px); border: none; }
   </style>
 </head>
 <body>
-  <h3>Enter 10-digit PNR</h3>
-  <input type="number" id="pnr" placeholder="e.g. 8752463552">
-  <br>
-  <button onclick="openStatus()">View Status</button>
+
+  <div class="container">
+    <h3>Rail PNR Tracker</h3>
+    <input type="number" id="pnrInput" placeholder="Enter 10-digit PNR">
+    <button class="btn-main" onclick="handleNewPnr()">Check & Save PNR</button>
+
+    <div id="listContainer">
+      <div class="card-header">SAVED TICKETS (TAP TO VIEW)</div>
+      <div id="pnrList">Loading your tickets...</div>
+    </div>
+  </div>
+
+  <!-- Viewer overlay for instant multi-ticket switching -->
+  <div id="viewerModal">
+    <div class="modal-bar">
+      <span id="viewingPnrTitle">PNR Status</span>
+      <button class="back-btn" onclick="closeViewer()">✕ Back to List</button>
+    </div>
+    <iframe id="statusFrame" src=""></iframe>
+  </div>
 
   <script>
-    window.Telegram.WebApp.ready();
-    window.Telegram.WebApp.expand();
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
 
-    function openStatus() {
-      const pnr = document.getElementById("pnr").value.trim();
+    const storage = tg.CloudStorage;
+
+    function renderList(pnrs) {
+      const listDiv = document.getElementById("pnrList");
+      if (!pnrs || pnrs.length === 0) {
+        listDiv.innerHTML = "<p style='color: #888; font-size: 13px; text-align: center; margin-top: 20px;'>No saved tickets. Enter a PNR above to add one.</p>";
+        return;
+      }
+
+      listDiv.innerHTML = "";
+      pnrs.forEach((pnr, index) => {
+        const card = document.createElement("div");
+        card.className = "pnr-card";
+        card.innerHTML = `
+          <div class="pnr-meta" onclick="viewPnr('${pnr}')">
+            <span class="pnr-number"># ${pnr}</span>
+            <span class="pnr-tap">Tap to view live chart & status ➔</span>
+          </div>
+          <button class="del-btn" onclick="deletePnr(${index})">Remove</button>
+        `;
+        listDiv.appendChild(card);
+      });
+    }
+
+    function loadSavedPnrs() {
+      storage.getItem("user_pnrs", (err, value) => {
+        let pnrs = [];
+        try { pnrs = JSON.parse(value) || []; } catch(e) {}
+        renderList(pnrs);
+      });
+    }
+
+    function handleNewPnr() {
+      const pnr = document.getElementById("pnrInput").value.trim();
       if (pnr.length !== 10) {
         alert("Please enter a valid 10-digit PNR number.");
         return;
       }
-      // Redirect straight to Umang's pre-rendered status page
-      window.location.href = "https://web.umang.gov.in/rail_nget/service/1967/info?pnrNo=" + pnr;
+
+      storage.getItem("user_pnrs", (err, value) => {
+        let pnrs = [];
+        try { pnrs = JSON.parse(value) || []; } catch(e) {}
+
+        if (!pnrs.includes(pnr)) {
+          pnrs.unshift(pnr);
+          storage.setItem("user_pnrs", JSON.stringify(pnrs), () => {
+            loadSavedPnrs();
+            viewPnr(pnr);
+          });
+        } else {
+          viewPnr(pnr);
+        }
+      });
+      document.getElementById("pnrInput").value = "";
     }
+
+    function deletePnr(index) {
+      storage.getItem("user_pnrs", (err, value) => {
+        let pnrs = [];
+        try { pnrs = JSON.parse(value) || []; } catch(e) {}
+        pnrs.splice(index, 1);
+        storage.setItem("user_pnrs", JSON.stringify(pnrs), () => {
+          renderList(pnrs);
+        });
+      });
+    }
+
+    function viewPnr(pnr) {
+      document.getElementById("viewingPnrTitle").innerText = "PNR: " + pnr;
+      const targetUrl = "https://web.umang.gov.in/rail_nget/service/1967/info?pnrNo=" + pnr;
+      
+      const frame = document.getElementById("statusFrame");
+      frame.src = targetUrl;
+      document.getElementById("viewerModal").style.display = "flex";
+
+      // Telegram hardware back button support
+      if (tg.BackButton) {
+        tg.BackButton.show();
+        tg.BackButton.onClick(closeViewer);
+      }
+    }
+
+    function closeViewer() {
+      const frame = document.getElementById("statusFrame");
+      frame.src = "";
+      document.getElementById("viewerModal").style.display = "none";
+      if (tg.BackButton) {
+        tg.BackButton.hide();
+      }
+    }
+
+    loadSavedPnrs();
   </script>
 </body>
 </html>
